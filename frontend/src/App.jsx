@@ -5,7 +5,7 @@ import Customers from './screens/Customers';
 import StockCheck from './screens/StockCheck';
 import { Mic, Users, BarChart2, Languages } from 'lucide-react';
 
-const backendUrl = 'http://localhost:5000';
+const backendUrl = import.meta.env.VITE_API_URL;
 
 export default function App() {
   const [language, setLanguage] = useState(null);
