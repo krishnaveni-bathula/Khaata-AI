@@ -1,3 +1,4 @@
+import { supabase } from '../supabaseClient';
 import React, { useState, useRef } from 'react';
 import { Mic, MicOff, AlertCircle, Check, X, Loader2, Sparkles, Languages } from 'lucide-react';
 
@@ -72,7 +73,6 @@ function getFuzzyMatchSuggestion(newName, existingNames) {
   for (const existing of existingNames) {
     const normalizedExisting = existing.toLowerCase().replace(/\s+/g, '');
     
-    // Exact matches do not need suggestion prompts
     if (normalizedExisting === normalizedNew) {
       continue;
     }
@@ -80,10 +80,6 @@ function getFuzzyMatchSuggestion(newName, existingNames) {
     const dist = levenshteinDistance(normalizedExisting, normalizedNew);
     const maxLen = Math.max(normalizedExisting.length, normalizedNew.length);
     
-    // Confident Suggestion Thresholds (similar but not auto-merged):
-    // - Distance 1 for short names (length <= 3) -> since len >= 4 is auto-merged
-    // - Distance 2 for medium names (length < 6) -> since len >= 6 is auto-merged
-    // - Distance 3 for long names (length >= 6)
     const isSuggestion = (dist === 1 && maxLen <= 3) || 
                          (dist === 2 && maxLen < 6) || 
                          (dist === 3 && maxLen >= 6);
@@ -103,25 +99,22 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
   const [isLoading, setIsLoading] = useState(false);
   const [transcription, setTranscription] = useState('');
   
-  // Modal state
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState({
     customer_name: '',
     amount: 0,
-    action: 'owe' // 'owe' or 'paid'
+    action: 'owe'
   });
   
   const [successToast, setSuccessToast] = useState(false);
   const [errorText, setErrorText] = useState('');
   
-  // Existing customer names and suggestion states
   const [existingNames, setExistingNames] = useState([]);
   const [suggestionName, setSuggestionName] = useState(null);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
 
-  // Fetch unique customer names on load
   React.useEffect(() => {
     const fetchExistingNames = async () => {
       try {
@@ -146,7 +139,7 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
 
   const textResources = promptGuides[language] || promptGuides.en;
 
-  // Start recording audio
+ 
   const startRecording = async () => {
     audioChunksRef.current = [];
     setErrorText('');
@@ -154,12 +147,11 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
     
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Determine correct mime type support
       let mimeType = 'audio/webm';
       if (!MediaRecorder.isTypeSupported('audio/webm')) {
         mimeType = 'audio/ogg';
         if (!MediaRecorder.isTypeSupported('audio/ogg')) {
-          mimeType = ''; // Let browser decide fallback
+          mimeType = '';
         }
       }
 
@@ -176,8 +168,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' });
         await handleAudioUpload(audioBlob);
-        
-        // Stop all stream tracks to release microphone
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -190,7 +180,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
     }
   };
 
-  // Stop recording audio
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
@@ -198,7 +187,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
     }
   };
 
-  // Upload audio blob to backend `/api/transcribe` and `/api/parse-entry`
   const handleAudioUpload = async (audioBlob) => {
     setIsLoading(true);
     setStatusText(textResources.transcribing);
@@ -207,7 +195,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
     formDataObj.append('audio', audioBlob, 'record.webm');
 
     try {
-      // 1. Transcribe audio
       const transcribeResponse = await fetch(`${backendUrl}/api/transcribe`, {
         method: 'POST',
         body: formDataObj,
@@ -226,7 +213,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
         throw new Error('No speech detected. Please speak louder or closer to the mic.');
       }
 
-      // 2. Parse text to structured format
       setStatusText(textResources.parsing);
       const parseResponse = await fetch(`${backendUrl}/api/parse-entry`, {
         method: 'POST',
@@ -243,7 +229,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
 
       const parsedName = parsedJson.customer_name || '';
 
-      // Open verification modal with values populated (or blank defaults if null)
       setFormData({
         customer_name: parsedName,
         amount: parsedJson.amount || 0,
@@ -263,7 +248,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
     }
   };
 
-  // Save the entry to database
   const handleConfirmSave = async () => {
     setIsLoading(true);
     setErrorText('');
@@ -280,7 +264,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
         throw new Error(errJson.error || 'Failed to save transaction to ledger.');
       }
 
-      // Save complete
       const savedName = formData.customer_name.trim();
       if (!existingNames.includes(savedName)) {
         setExistingNames(prev => [...prev, savedName]);
@@ -298,23 +281,25 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
 
   return (
     <div className="flex-1 flex flex-col p-20px bg-background text-on-background pb-32">
-      {/* Top bar with language changing option */}
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold font-sans flex items-center gap-2">
           <Sparkles className="w-6 h-6 text-primary animate-pulse" />
           <span>Khata AI</span>
         </h1>
-        <button
-          onClick={onChangeLanguage}
-          className="flex items-center gap-2 bg-surface-container hover:bg-primary/10 px-4 py-2 rounded-full text-xs font-semibold font-sans text-on-surface-variant transition-colors border border-surface-container"
-        >
-          <Languages className="w-4 h-4 text-primary" />
-          <span>{language === 'en' ? 'English' : language === 'te' ? 'తెలుగు' : language === 'hi' ? 'हिन्दी' : 'தமிழ்'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onChangeLanguage}
+            className="flex items-center gap-2 bg-surface-container hover:bg-primary/10 px-4 py-2 rounded-full text-xs font-semibold font-sans text-on-surface-variant transition-colors border border-surface-container"
+          >
+            <Languages className="w-4 h-4 text-primary" />
+            <span>{language === 'en' ? 'English' : language === 'te' ? 'తెలుగు' : language === 'hi' ? 'हिन्दी' : 'தமிழ்'}</span>
+          </button>
+        </div>
       </div>
 
-      {/* Main Ledger Recording Card */}
       <div className="flex-1 flex flex-col justify-center items-center my-6">
+   
+    
         <div className="bg-surface-container-lowest shadow-premium-sm border border-surface-container p-8 rounded-3xl w-full max-w-md flex flex-col items-center justify-center text-center relative overflow-hidden">
           
           <span className="text-xs uppercase tracking-wider text-primary font-bold mb-2">
@@ -325,7 +310,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
             {textResources.guide}
           </p>
 
-          {/* Interactive Mic Button */}
           <div className="relative flex items-center justify-center mb-6">
             {isRecording && (
               <>
@@ -360,7 +344,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
             )}
           </div>
 
-          {/* Real-time transcription feedback */}
           {transcription && (
             <div className="w-full mt-4 p-4 bg-surface-container-low rounded-2xl border border-surface-container text-left">
               <span className="text-xs text-primary font-bold block mb-1">What we heard:</span>
@@ -368,7 +351,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
             </div>
           )}
 
-          {/* Error display */}
           {errorText && (
             <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-2 text-left w-full">
               <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
@@ -378,7 +360,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
         </div>
       </div>
 
-      {/* Success Toast */}
       {successToast && (
         <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-50 glassmorphism shadow-premium-sm border-tertiary border px-6 py-3 rounded-full flex items-center gap-2 text-tertiary">
           <Check className="w-5 h-5 bg-tertiary text-white rounded-full p-0.5" />
@@ -386,7 +367,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
         </div>
       )}
 
-      {/* Confirmation Modal */}
       {showModal && (
         <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-6 backdrop-blur-xs">
           <div className="bg-surface-container-lowest rounded-3xl w-full max-w-sm p-6 shadow-2xl border border-surface-container animate-in fade-in-50 zoom-in-95 duration-250">
@@ -401,7 +381,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
             </div>
 
             <div className="space-y-4">
-              {/* Customer Name */}
               <div>
                 <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider block mb-1">
                   Customer Name
@@ -433,7 +412,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
                 )}
               </div>
 
-              {/* Amount */}
               <div>
                 <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider block mb-1">
                   Amount (₹)
@@ -447,7 +425,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
                 />
               </div>
 
-              {/* Action (Owe or Paid) */}
               <div>
                 <label className="text-xs font-bold text-on-surface-variant uppercase tracking-wider block mb-1">
                   Transaction Type
@@ -479,7 +456,6 @@ export default function Home({ language = 'en', backendUrl = 'http://localhost:5
               </div>
             </div>
 
-            {/* Modal Actions */}
             <div className="mt-6 flex gap-3">
               <button
                 onClick={() => setShowModal(false)}

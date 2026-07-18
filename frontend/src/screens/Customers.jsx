@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Loader2, RefreshCw, AlertCircle, ArrowUpRight, ArrowDownLeft, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Loader2, RefreshCw, AlertCircle, ArrowUpRight, ArrowDownLeft, ChevronDown, ChevronUp, TrendingUp, TrendingDown } from 'lucide-react';
 
 export default function Customers({ backendUrl = 'http://localhost:5000' }) {
   const [transactions, setTransactions] = useState([]);
@@ -55,34 +55,28 @@ function levenshteinDistance(a, b) {
   transactions.forEach((tx) => {
     const rawName = tx.customer_name.trim();
     const normalizedName = rawName.toLowerCase().replace(/\s+/g, '');
-    
-    // Find the best matching key based on exact or auto-merge rules
+
     let matchedKey = null;
     let minDistance = Infinity;
-    
+
     for (const key of Object.keys(customerMap)) {
       if (key === normalizedName) {
         matchedKey = key;
         break;
       }
-      
+
       const dist = levenshteinDistance(key, normalizedName);
       const maxLen = Math.max(key.length, normalizedName.length);
-      
-      // Auto-merge strict thresholds:
-      // - 1 character difference for names of length >= 4
-      // - 2 character differences for names of length >= 6
+
       const canAutoMerge = (dist === 1 && maxLen >= 4) || (dist === 2 && maxLen >= 6);
-      
+
       if (canAutoMerge && dist < minDistance) {
         minDistance = dist;
         matchedKey = key;
       }
     }
-    
+
     if (matchedKey) {
-      // Merge into existing customer group
-      // Casing/Spacing preference: if the new name has a space and the existing doesn't, update display name
       if (rawName.includes(' ') && !customerMap[matchedKey].name.includes(' ')) {
         customerMap[matchedKey].name = rawName;
       }
@@ -90,7 +84,6 @@ function levenshteinDistance(a, b) {
       customerMap[matchedKey].netDebt += value;
       customerMap[matchedKey].transactions.push(tx);
     } else {
-      // Create new customer group
       customerMap[normalizedName] = {
         name: rawName,
         netDebt: tx.action === 'owe' ? tx.amount : -tx.amount,
@@ -101,10 +94,23 @@ function levenshteinDistance(a, b) {
 
   // Convert to array and filter + sort
   const customerList = Object.values(customerMap)
-    .filter((customer) => 
+    .filter((customer) =>
       customer.name.toLowerCase().includes(searchQuery.toLowerCase())
     )
-    .sort((a, b) => b.netDebt - a.netDebt); // Sort by highest debt first
+    .sort((a, b) => b.netDebt - a.netDebt);
+
+  // --- Summary totals ---
+  const totalOwed = Object.values(customerMap).reduce(
+    (sum, c) => sum + (c.netDebt > 0 ? c.netDebt : 0),
+    0
+  );
+
+  const todayStr = new Date().toDateString();
+  const paidToday = transactions.reduce((sum, tx) => {
+    if (tx.action !== 'paid') return sum;
+    const txDate = new Date(tx.timestamp || tx.created_at).toDateString();
+    return txDate === todayStr ? sum + Number(tx.amount) : sum;
+  }, 0);
 
   const toggleExpand = (name) => {
     if (expandedCustomer === name) {
@@ -132,6 +138,35 @@ function levenshteinDistance(a, b) {
           <RefreshCw className={`w-5 h-5 ${isLoading ? 'animate-spin text-primary' : ''}`} />
         </button>
       </div>
+
+      {/* Summary cards */}
+      {!isLoading && !errorText && (
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          <div className="bg-primary/5 border border-primary/20 rounded-3xl p-4">
+            <div className="flex items-center gap-2 mb-1.5">
+              <TrendingUp className="w-4 h-4 text-primary" />
+              <span className="text-[10px] font-bold text-primary uppercase tracking-wider font-sans">
+                Total owed to you
+              </span>
+            </div>
+            <p className="text-2xl font-bold text-primary font-sans">
+              ₹{totalOwed.toFixed(2)}
+            </p>
+          </div>
+
+          <div className="bg-tertiary/5 border border-tertiary/20 rounded-3xl p-4">
+            <div className="flex items-center gap-2 mb-1.5">
+              <TrendingDown className="w-4 h-4 text-tertiary" />
+              <span className="text-[10px] font-bold text-tertiary uppercase tracking-wider font-sans">
+                Paid today
+              </span>
+            </div>
+            <p className="text-2xl font-bold text-tertiary font-sans">
+              ₹{paidToday.toFixed(2)}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Search bar */}
       <div className="relative mb-6">
@@ -179,7 +214,6 @@ function levenshteinDistance(a, b) {
                   key={customer.name}
                   className="bg-surface-container-lowest border border-surface-container shadow-premium-sm rounded-3xl overflow-hidden transition-all duration-200"
                 >
-                  {/* Summary Card */}
                   <div
                     onClick={() => toggleExpand(customer.name)}
                     className="p-5 flex justify-between items-center cursor-pointer hover:bg-surface-container-low transition-colors"
@@ -202,7 +236,7 @@ function levenshteinDistance(a, b) {
                           {owesMoney ? 'Owes You' : customer.netDebt < 0 ? 'Advance' : 'Settled'}
                         </span>
                       </div>
-                      
+
                       {isExpanded ? (
                         <ChevronUp className="w-5 h-5 text-on-surface-variant" />
                       ) : (
@@ -211,7 +245,6 @@ function levenshteinDistance(a, b) {
                     </div>
                   </div>
 
-                  {/* Expanded Transaction Details */}
                   {isExpanded && (
                     <div className="bg-surface-container-low px-5 pb-5 pt-3 border-t border-surface-container space-y-3 animate-in slide-in-from-top-2 duration-200">
                       <h4 className="text-xs font-bold text-on-surface-variant uppercase tracking-wider mb-2">
